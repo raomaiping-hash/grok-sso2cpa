@@ -1,7 +1,7 @@
 {
   "name": "sso-bridge",
   "productName": "SSO Bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local desktop workbench for converting x.ai SSO credentials.",
   "main": "electron/main.js",
   "author": "SSO Bridge contributors",

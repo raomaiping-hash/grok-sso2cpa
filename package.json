@@ -23,6 +23,7 @@
   "build": {
     "appId": "com.sso-bridge.desktop",
     "productName": "SSO Bridge",
+    "icon": "assets/icon.png",
     "asar": true,
     "directories": {
       "output": "release"

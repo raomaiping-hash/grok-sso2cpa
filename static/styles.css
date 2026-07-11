@@ -69,3 +69,51 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .history-result { color: var(--green); font: 10px "DM Mono", monospace; }
 .history-link { color: var(--orange); text-decoration: none; font-size: 10px; }
 @media (max-width: 700px) { .download-area { align-items: flex-start; flex-direction: column; }.download-actions { width: 100%; justify-content: space-between; } }
+
+/* Readable typography: keep the dense dashboard comfortable at normal desktop scale. */
+body { font-size: 15px; line-height: 1.5; }
+.update-button { font-size: 10px; }
+.brand-caption, .eyebrow, .section-kicker, .version, .log-header { font-size: 11px; }
+.nav-item { font-size: 14px; }
+.local-status { font-size: 13px; }
+.status-pill, .output-tag, .security-label { font-size: 10px; }
+.sidebar-footer p, footer { font-size: 12px; }
+.hero-copy { font-size: 15px; }
+.topbar-badge { font-size: 12px; }
+.metric-card div span { font-size: 12px; }
+.metric-card small { font-size: 11px; }
+.panel-heading h2 { font-size: 22px; }
+.source-tab strong { font-size: 13px; }
+.source-tab small { font-size: 11px; }
+.field-label-row label, .settings-grid label > span { font-size: 13px; }
+.hint, .input-meta, .settings-grid small { font-size: 11px; }
+.code-input { font-size: 14px; }
+.upload-zone strong, .output-copy strong { font-size: 13px; }
+.upload-zone small, .output-copy small { font-size: 11px; }
+.file-list { font-size: 12px; }
+.file-list div span:last-child { font-size: 11px; }
+.advanced-settings summary { font-size: 13px; }
+.advanced-settings summary small { font-size: 11px; }
+.settings-grid input { font-size: 13px; }
+.form-message { font-size: 12px; }
+.primary-button { font-size: 14px; }
+.micro-copy { font-size: 11px; }
+.status-badge { font-size: 11px; }
+.empty-monitor h3 { font-size: 17px; }
+.empty-monitor p { font-size: 12px; }
+.progress-head strong { font-size: 15px; }
+.progress-head span, .progress-percent span { font-size: 12px; }
+.monitor-stats span { font-size: 11px; }
+.log-lines { font-size: 12px; }
+.download-area strong { font-size: 13px; }
+.download-area span { font-size: 11px; }
+.download-button { font-size: 12px; }
+.cancel-button { font-size: 11px; }
+.security-note strong { font-size: 13px; }
+.security-note p { font-size: 12px; }
+.history-row strong { font-size: 12px; }
+.history-row span, .history-link { font-size: 11px; }
+@media (max-width: 700px) {
+  .hero-copy { font-size: 14px; }
+  .metric-card small { font-size: 10px; }
+}

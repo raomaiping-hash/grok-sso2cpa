@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101216" />
+    <title>SSO Bridge · 凭据转换工作台</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-lockup">
+          <div class="brand-mark"><span></span><span></span><span></span></div>
+          <div>
+            <div class="brand-name">SSO Bridge</div>
+            <div class="brand-caption">LOCAL AUTH WORKBENCH</div>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="主导航">
+          <a class="nav-item active" href="#workspace"><span class="nav-icon">⌁</span>转换工作台</a>
+          <a class="nav-item" href="#history"><span class="nav-icon">↗</span>任务记录</a>
+          <a class="nav-item" href="#security"><span class="nav-icon">◇</span>安全说明</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="local-status"><span class="status-dot"></span><span>本地模式</span><span class="status-pill">安全</span></div>
+          <p>凭据只在当前运行实例中处理，不会上传到第三方服务。</p>
+          <div class="version">SSO Bridge <span>v0.1</span></div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow"><span class="live-dot"></span> AUTH PIPELINE / READY</div>
+            <h1>把 SSO 变成<br /><em>可直接使用的认证文件</em></h1>
+            <p class="hero-copy">一个本地化的转换工作台，处理 x.ai SSO Cookie、Device Flow 与多种输出格式。</p>
+          </div>
+          <div class="topbar-badge"><span class="badge-icon">✦</span><span>本机执行 · 24 小时自动清理</span></div>
+        </header>
+
+        <section class="metric-row" aria-label="产品能力">
+          <div class="metric-card"><div class="metric-icon orange">↔</div><div><strong>2</strong><span>输出格式</span></div><small>Grok · cliproxy</small></div>
+          <div class="metric-card"><div class="metric-icon blue">◎</div><div><strong>100</strong><span>单批上限</span></div><small>支持批量队列</small></div>
+          <div class="metric-card"><div class="metric-icon green">⌁</div><div><strong>0</strong><span>当前任务</span></div><small>等待你的第一个转换</small></div>
+          <div class="metric-card process-card"><div class="process-visual"><span></span><span></span><span></span></div><div><strong>Local</strong><span>处理位置</span></div><small>凭据留在本机</small></div>
+        </section>
+
+        <section id="workspace" class="workspace-grid">
+          <div class="panel form-panel">
+            <div class="panel-heading">
+              <div><div class="section-kicker">01 / INPUT</div><h2>选择输入来源</h2></div>
+              <div class="step-number">01</div>
+            </div>
+            <div class="source-tabs" role="tablist">
+              <button class="source-tab active" data-mode="sso" role="tab"><span>◈</span><span><strong>SSO Cookie</strong><small>单个或批量粘贴</small></span></button>
+              <button class="source-tab" data-mode="from_auth" role="tab"><span>▧</span><span><strong>已有 auth 文件</strong><small>转换为 cliproxy</small></span></button>
+            </div>
+
+            <div id="ssoSource" class="source-content active">
+              <div class="field-label-row"><label for="ssoInput">SSO Cookie 列表</label><span class="hint">每行一个 · 支持 email----cookie</span></div>
+              <textarea id="ssoInput" class="code-input" spellcheck="false" placeholder="粘贴 SSO Cookie，每行一个…&#10;&#10;user@example.com----eyJ...&#10;eyJ..."></textarea>
+              <div class="input-meta"><span id="lineCount">0 个有效输入</span><span>不会记录原始内容</span></div>
+            </div>
+
+            <div id="authSource" class="source-content">
+              <label class="upload-zone" for="authFiles">
+                <input id="authFiles" type="file" accept=".json,application/json" multiple />
+                <span class="upload-icon">↑</span><strong>拖入或选择 auth JSON 文件</strong><small>支持 Grok 嵌套格式与 cliproxyapi 平铺格式</small>
+              </label>
+              <div id="fileList" class="file-list empty-file-list">尚未选择文件</div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="panel-heading compact-heading">
+              <div><div class="section-kicker">02 / OUTPUT</div><h2>选择输出格式</h2></div>
+              <div class="step-number">02</div>
+            </div>
+            <div class="output-grid">
+              <label class="output-option selected"><input type="checkbox" id="targetCliproxy" checked /><span class="check-mark">✓</span><span class="output-copy"><strong>cliproxyapi</strong><small>xai-{email}.json · OAuth 平铺格式</small></span><span class="output-tag">推荐</span></label>
+              <label class="output-option selected"><input type="checkbox" id="targetGrok" checked /><span class="check-mark">✓</span><span class="output-copy"><strong>Grok 原生</strong><small>auth.json · 嵌套授权格式</small></span></label>
+            </div>
+
+            <div class="divider"></div>
+            <details class="advanced-settings">
+              <summary><span>⚙</span>高级策略 <small>限流退避、重试与账号标记</small><b>⌄</b></summary>
+              <div class="settings-grid">
+                <label><span>账号间隔（秒）</span><input id="delay" type="number" min="0" max="900" value="20" /><small>0 会使用温和默认值</small></label>
+                <label><span>最大退避（秒）</span><input id="maxDelay" type="number" min="30" max="1800" value="180" /><small>限流时的等待上限</small></label>
+                <label><span>单账号重试</span><input id="retries" type="number" min="1" max="20" value="8" /><small>verify / approve</small></label>
+                <label><span>账号级重试</span><input id="accountRetries" type="number" min="1" max="10" value="3" /><small>限流后重新跑账号</small></label>
+                <label class="wide"><span>统一邮箱标签（可选）</span><input id="emailOverride" type="email" placeholder="留空则从输入或 userinfo 获取" /><small>用于生成稳定的 xai-{email}.json 文件名</small></label>
+              </div>
+            </details>
+
+            <div id="formMessage" class="form-message" role="alert"></div>
+            <button id="startButton" class="primary-button"><span class="button-spark">✦</span>开始转换<span class="button-arrow">→</span></button>
+            <p class="micro-copy">开始后会在本机执行 Device Flow。请确保 SSO Cookie 仍然有效。</p>
+          </div>
+
+          <div class="panel monitor-panel" id="activity">
+            <div class="panel-heading">
+              <div><div class="section-kicker">LIVE / MONITOR</div><h2>任务进度</h2></div>
+              <span id="jobStatus" class="status-badge idle">待开始</span>
+            </div>
+
+            <div id="emptyMonitor" class="empty-monitor"><div class="empty-orbit"><span>⌁</span></div><h3>准备接收任务</h3><p>配置输入与输出后，任务状态、日志和可下载文件都会出现在这里。</p><div class="empty-line"><span></span><span></span><span></span></div></div>
+
+            <div id="activeMonitor" class="active-monitor hidden">
+              <div class="progress-head"><div><strong id="progressTitle">正在准备</strong><span id="progressSubtitle">等待后台任务启动</span></div><div class="progress-percent"><strong id="progressPercent">0%</strong><span id="progressCount">0 / 0</span></div></div>
+              <div class="progress-track"><span id="progressBar"></span></div>
+              <div class="current-account"><span class="pulse"></span><span id="currentLabel">—</span><span id="currentState">处理中</span></div>
+              <div class="monitor-stats"><div><strong id="successCount">0</strong><span>成功</span></div><div><strong id="failedCount">0</strong><span>失败</span></div><div><strong id="fileCount">0</strong><span>文件</span></div></div>
+              <div class="log-box"><div class="log-header"><span>ACTIVITY LOG</span><span id="logState">LIVE</span></div><div id="logLines" class="log-lines"></div></div>
+              <div id="downloadArea" class="download-area hidden"><div class="download-copy"><strong>输出已就绪</strong><span>凭据文件已生成，可下载到本机</span></div><div class="download-actions"><a id="downloadAll" class="download-button" href="#">下载 ZIP <span>↓</span></a><div id="fileLinks" class="file-links"></div></div></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="security" class="security-note"><div class="security-icon">◇</div><div><strong>安全边界</strong><p>SSO Cookie、Access Token 与 Refresh Token 都是敏感凭据。SSO Bridge 只接受本机访问；Device Flow 会按 OAuth 流程访问 x.ai 官方端点，任务原始输入会在执行后清空，输出文件默认保留 24 小时。</p></div><span class="security-label">LOCAL ONLY</span></section>
+        <section id="history" class="panel history-panel"><div class="panel-heading"><div><div class="section-kicker">ARCHIVE / RECENT</div><h2>任务记录</h2></div><button id="refreshHistory" class="refresh-button">刷新 ↻</button></div><div id="historyList" class="history-list"><div class="history-empty">还没有已完成的任务</div></div></section>
+        <footer>SSO Bridge · local credential conversion workspace <span>为自己拥有或获授权的账号使用</span></footer>
+      </main>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

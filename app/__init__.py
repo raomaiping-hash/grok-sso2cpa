@@ -1,0 +1,1 @@
+"""SSO Bridge application package."""

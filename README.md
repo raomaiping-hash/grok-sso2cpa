@@ -44,7 +44,14 @@ npm run dist
 
 安装包输出在 `release/`。应用会把 Python 后端作为本地子进程启动，任务输出写入 Electron 的用户数据目录（Windows 默认位于 `%APPDATA%/sso-bridge/jobs`；开发版也可能使用 `data/jobs`）。应用内的“检查版本”使用 `electron-updater` 检查 GitHub Releases。
 
-发布到 GitHub 前设置 `GH_TOKEN`、`GH_OWNER`、`GH_REPO`，然后运行 `npm run release`。发布脚本会拒绝缺少这些配置的发布操作，不会把占位仓库名上传出去。
+发布采用 GitHub Actions 云端构建，不要在本地直接上传安装包。更新 `package.json` 版本号后，提交并推送对应的版本标签即可：
+
+```powershell
+git tag v0.3.1
+git push origin v0.3.1
+```
+
+推送 `v*` 标签会自动在 GitHub 的 Windows 云端 runner 上执行 `npm run dist`，创建 Release 并上传安装包、`latest.yml` 和 `.blockmap`。工作流文件位于 `.github/workflows/publish-windows.yml`；GitHub Actions 页面仍保留手动补跑入口。
 
 ## 使用方式
 

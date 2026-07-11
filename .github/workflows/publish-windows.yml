@@ -1,6 +1,9 @@
 name: Build Windows release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -14,11 +17,13 @@ permissions:
 jobs:
   build-and-publish:
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - name: Check out release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,18 +42,45 @@ jobs:
           npm ci
           python -m pip install -r requirements-build.txt
 
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $expectedTag = "v$packageVersion"
+          if ($env:RELEASE_TAG -ne $expectedTag) {
+            throw "Release tag $env:RELEASE_TAG does not match package version $expectedTag"
+          }
+
       - name: Build Windows installer
         shell: pwsh
         run: npm run dist
+
+      - name: Create GitHub Release if missing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$env:RELEASE_TAG" --generate-notes --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to create release $env:RELEASE_TAG"
+            }
+          }
 
       - name: Upload installer to GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ inputs.tag }}" `
-            "release/SSO-Bridge-Setup-0.3.0.exe" `
-            "release/SSO-Bridge-Setup-0.3.0.exe.blockmap" `
+          $installer = Get-ChildItem -Path release -Filter 'SSO-Bridge-Setup-*.exe' | Select-Object -First 1
+          $blockmap = Get-ChildItem -Path release -Filter 'SSO-Bridge-Setup-*.exe.blockmap' | Select-Object -First 1
+          if (-not $installer -or -not $blockmap) {
+            throw 'The Windows installer or blockmap was not generated'
+          }
+          gh release upload "$env:RELEASE_TAG" `
+            $installer.FullName `
+            $blockmap.FullName `
             "release/latest.yml" `
             --clobber `
             --repo "${{ github.repository }}"

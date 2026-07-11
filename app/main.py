@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import ipaddress
 import json
 import secrets
@@ -71,6 +71,10 @@ class JobRequest(BaseModel):
     concurrency: int = Field(default=4, ge=1, le=64)
 
 
+class JobCancelledError(RuntimeError):
+    """Raised when an output write races with a cancellation request."""
+
+
 @dataclass
 class Job:
     id: str
@@ -89,6 +93,8 @@ class Job:
     accounts: list[dict[str, Any]] = field(default_factory=list)
     files: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
+    cancel_requested: bool = False
+    cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def log(self, message: str) -> None:
@@ -102,23 +108,37 @@ class Job:
             self.status = status
             if status == "running":
                 self.started_at = time.time()
-            if status in {"completed", "failed"}:
+            if status in {"completed", "failed", "cancelled"}:
                 self.finished_at = time.time()
 
-    def write_file(self, filename: str, content: bytes) -> str:
-        safe_name = Path(filename).name
-        if not safe_name:
-            raise ValueError("输出文件名为空")
-        target = self.output_dir / safe_name
-        if target.exists():
-            stem = target.stem
-            suffix = target.suffix
-            counter = 2
-            while target.exists():
-                target = self.output_dir / f"{stem}-{counter}{suffix}"
-                counter += 1
-        target.write_bytes(content)
+    def request_cancel(self) -> bool:
         with self._lock:
+            if self.status in {"completed", "failed", "cancelled"}:
+                return False
+            self.cancel_requested = True
+            self.cancel_event.set()
+            self.status = "cancelling"
+            return True
+
+    def is_cancelled(self) -> bool:
+        return self.cancel_event.is_set()
+
+    def write_file(self, filename: str, content: bytes) -> str:
+        with self._lock:
+            if self.cancel_event.is_set():
+                raise JobCancelledError()
+            safe_name = Path(filename).name
+            if not safe_name:
+                raise ValueError("输出文件名为空")
+            target = self.output_dir / safe_name
+            if target.exists():
+                stem = target.stem
+                suffix = target.suffix
+                counter = 2
+                while target.exists():
+                    target = self.output_dir / f"{stem}-{counter}{suffix}"
+                    counter += 1
+            target.write_bytes(content)
             self.files.append({"name": target.name, "size": len(content)})
         return target.name
 
@@ -140,6 +160,7 @@ class Job:
                     for item in self.files
                 ],
                 "error": self.error,
+                "cancel_requested": self.cancel_requested,
                 "accounts": list(self.accounts),
             }
             if include_logs:
@@ -180,7 +201,7 @@ class JobStore:
         cutoff = time.time() - JOB_RETENTION_SECONDS
         with self._lock:
             expired = [job_id for job_id, job in self._jobs.items() if job.finished_at and job.finished_at < cutoff]
-            protected = {job_id for job_id, job in self._jobs.items() if job.status in {"queued", "running"}}
+            protected = {job_id for job_id, job in self._jobs.items() if job.status in {"queued", "running", "cancelling"}}
             for job_id in expired:
                 self._jobs.pop(job_id, None)
         purge_expired_job_dirs(protected)
@@ -243,6 +264,15 @@ def get_job(job_id: str) -> dict[str, Any]:
     return job.snapshot()
 
 
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict[str, Any]:
+    job = _require_job(job_id)
+    if not job.request_cancel():
+        raise HTTPException(status_code=409, detail="任务已经结束，无法停止")
+    job.log("已收到停止请求，正在取消未开始的账号任务")
+    return job.snapshot()
+
+
 @app.get("/api/jobs/{job_id}/download/all.zip")
 def download_all(job_id: str) -> FileResponse:
     job = _require_job(job_id)
@@ -273,13 +303,21 @@ def _require_job(job_id: str) -> Job:
 
 
 def run_job(job: Job) -> None:
+    if job.is_cancelled():
+        job.set_status("cancelled")
+        job.log("任务在启动前已停止")
+        job.redact_input()
+        return
     job.set_status("running")
     try:
         if job.request.mode == "sso":
             run_sso_job(job)
         else:
             run_auth_job(job)
-        if job.success:
+        if job.is_cancelled():
+            job.set_status("cancelled")
+            job.log(f"任务已停止：已完成 {job.success} 个，跳过剩余任务")
+        elif job.success:
             job.set_status("completed")
             job.log(f"任务完成：{job.success} 个成功，{job.failed} 个失败")
         else:
@@ -289,16 +327,25 @@ def run_job(job: Job) -> None:
         job.error = str(exc)
         job.log(str(exc))
         job.set_status("failed")
+    except JobCancelledError:
+        job.set_status("cancelled")
+        job.log(f"任务已停止：已完成 {job.success} 个，跳过剩余任务")
     except Exception as exc:
-        job.error = str(exc)
-        job.log(f"任务异常：{exc}")
-        job.set_status("failed")
+        if job.is_cancelled():
+            job.set_status("cancelled")
+            job.log(f"任务已停止：已完成 {job.success} 个，跳过剩余任务")
+        else:
+            job.error = str(exc)
+            job.log(f"任务异常：{exc}")
+            job.set_status("failed")
     finally:
         job.redact_input()
 
 
 def run_sso_job(job: Job) -> None:
     request = job.request
+    if job.is_cancelled():
+        return
     accounts = load_sso_list(request.sso_text)
     request.sso_text = ""
     job.total = len(accounts)
@@ -311,13 +358,19 @@ def run_sso_job(job: Job) -> None:
         token: dict[str, Any] | None = None
         last_error: Exception | None = None
         for attempt in range(1, request.account_retries + 1):
+            if job.is_cancelled():
+                return index, line_email, None, last_error
             try:
                 token = sso_to_token(
                     cookie,
                     max_retries=request.retries,
                     base_delay=request.delay or 15,
                     log=job.log,
+                    sleep=job.cancel_event.wait,
+                    should_cancel=job.is_cancelled,
                 )
+                if job.is_cancelled():
+                    return index, line_email, None, last_error
                 if token:
                     break
                 break
@@ -326,36 +379,65 @@ def run_sso_job(job: Job) -> None:
                 if attempt < request.account_retries:
                     cool = backoff_sec(request.delay or 15, attempt, request.max_delay)
                     job.log(f"账号触发限流，冷却 {cool:.0f}s 后重试 ({attempt}/{request.account_retries})")
-                    time.sleep(cool)
+                    if job.cancel_event.wait(cool):
+                        return index, line_email, None, last_error
         return index, line_email, token, last_error
 
-    with ThreadPoolExecutor(max_workers=request.concurrency, thread_name_prefix="sso-account") as executor:
-        futures = [executor.submit(process_account, index, cookie, email) for index, (cookie, email) in enumerate(accounts, start=1)]
-        for future in as_completed(futures):
-            index, line_email, token, last_error = future.result()
-            completed = job.success + job.failed + 1
-            job.current = completed
-            job.current_label = f"并发处理中 · {completed}/{len(accounts)}"
-            if not token:
-                job.failed += 1
-                detail = str(last_error) if last_error else "SSO 转换失败"
-                job.accounts.append({"label": line_email or f"账号 {index}", "status": "failed", "error": detail})
-                job.log(f"[{index}/{len(accounts)}] 失败：{detail}")
-                continue
+    executor = ThreadPoolExecutor(max_workers=request.concurrency, thread_name_prefix="sso-account")
+    futures = {
+        executor.submit(process_account, index, cookie, email)
+        for index, (cookie, email) in enumerate(accounts, start=1)
+    }
+    pending = set(futures)
+    cancelled = False
+    try:
+        while pending:
+            done, pending = wait(pending, timeout=0.25, return_when=FIRST_COMPLETED)
+            if job.is_cancelled():
+                cancelled = True
+                for future in pending:
+                    future.cancel()
+                job.log("已停止：取消尚未开始的账号任务")
+                break
+            for future in done:
+                if job.is_cancelled():
+                    cancelled = True
+                    break
+                index, line_email, token, last_error = future.result()
+                completed = job.success + job.failed + 1
+                job.current = completed
+                job.current_label = f"并发处理中 · {completed}/{len(accounts)}"
+                if not token:
+                    job.failed += 1
+                    detail = str(last_error) if last_error else "SSO 转换失败"
+                    job.accounts.append({"label": line_email or f"账号 {index}", "status": "failed", "error": detail})
+                    job.log(f"[{index}/{len(accounts)}] 失败：{detail}")
+                    continue
 
-            email = request.email_override or line_email
-            output_names: list[str] = []
-            if request.target_cliproxy:
-                filename, entry = token_to_cliproxy_entry(token, email=email)
-                output_names.append(job.write_file(filename, serialize_json(entry, compact=True)))
-            if request.target_grok:
-                key, entry = token_to_auth_entry(token, email=email)
-                grok_payload = merge_auth_payload(grok_payload, entry, unique=True)
-                output_names.append(f"auth.json ({key})")
+                email = request.email_override or line_email
+                output_names: list[str] = []
+                if request.target_cliproxy:
+                    filename, entry = token_to_cliproxy_entry(token, email=email)
+                    output_names.append(job.write_file(filename, serialize_json(entry, compact=True)))
+                if request.target_grok:
+                    key, entry = token_to_auth_entry(token, email=email)
+                    grok_payload = merge_auth_payload(grok_payload, entry, unique=True)
+                    output_names.append(f"auth.json ({key})")
 
-            job.success += 1
-            job.accounts.append({"label": email or f"账号 {index}", "status": "success", "files": output_names})
-            job.log(f"[{index}/{len(accounts)}] 完成：{', '.join(output_names)}")
+                job.success += 1
+                job.accounts.append({"label": email or f"账号 {index}", "status": "success", "files": output_names})
+                job.log(f"[{index}/{len(accounts)}] 完成：{', '.join(output_names)}")
+            if cancelled:
+                for future in pending:
+                    future.cancel()
+                break
+    finally:
+        # Wait for active HTTP calls to return; otherwise the UI would say
+        # "cancelled" while hidden workers could still retry in the background.
+        executor.shutdown(wait=True, cancel_futures=cancelled)
+
+    if cancelled or job.is_cancelled():
+        return
 
     if request.target_grok and grok_payload:
         job.write_file("auth.json", serialize_json(grok_payload))
@@ -363,10 +445,14 @@ def run_sso_job(job: Job) -> None:
 
 def run_auth_job(job: Job) -> None:
     request = job.request
+    if job.is_cancelled():
+        return
     sources = list(request.auth_files)
     request.auth_files.clear()
     prepared: list[tuple[Any, list[tuple[str, dict[str, Any]]] | None, str]] = []
     for source in sources:
+        if job.is_cancelled():
+            return
         try:
             documents = convert_auth_documents(json.loads(source.content), email_override=request.email_override)
             prepared.append((source, documents, ""))
@@ -379,6 +465,8 @@ def run_auth_job(job: Job) -> None:
         job.log("已有 auth 文件转换模式会生成 cliproxyapi 输出，源格式不会被覆盖")
 
     for index, (source, documents, error) in enumerate(prepared, start=1):
+        if job.is_cancelled():
+            return
         job.current = index
         job.current_label = source.name
         if documents is None:
@@ -388,6 +476,8 @@ def run_auth_job(job: Job) -> None:
             continue
         output_names: list[str] = []
         for filename, entry in documents:
+            if job.is_cancelled():
+                return
             output_name = job.write_file(filename, serialize_json(entry, compact=True))
             output_names.append(output_name)
             job.success += 1

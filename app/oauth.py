@@ -91,10 +91,21 @@ def request_device_code() -> dict[str, Any] | None:
         return None
 
 
-def poll_token(device_code: str, interval: int, expires_in: int, timeout: int = 1800) -> dict[str, Any] | None:
+def poll_token(
+    device_code: str,
+    interval: int,
+    expires_in: int,
+    timeout: int = 1800,
+    sleep: Callable[[float], None] = time.sleep,
+    should_cancel: Callable[[], bool] | None = None,
+) -> dict[str, Any] | None:
     deadline = time.time() + min(int(expires_in), timeout)
     while time.time() < deadline:
-        time.sleep(max(0, interval))
+        if should_cancel and should_cancel():
+            return None
+        sleep(max(0, interval))
+        if should_cancel and should_cancel():
+            return None
         data = urllib.parse.urlencode(
             {
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
@@ -172,10 +183,18 @@ def sso_to_token(
     base_delay: float = 15.0,
     log: Callable[[str], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any] | None:
     """Exchange one SSO cookie for an OAuth token through Device Flow."""
 
     write_log = log or (lambda _message: None)
+    if should_cancel and should_cancel():
+        return None
+
+    def pause(seconds: float) -> bool:
+        sleep(seconds)
+        return not (should_cancel and should_cancel())
+
     session = _load_curl_session()
     session.cookies.set("sso", sso_cookie, domain=".x.ai")
     try:
@@ -191,6 +210,8 @@ def sso_to_token(
 
     def fresh_device() -> bool:
         nonlocal device
+        if should_cancel and should_cancel():
+            return False
         device = request_device_code()
         if not device:
             write_log("无法申请 Device Code")
@@ -226,7 +247,8 @@ def sso_to_token(
                 rate_hits += 1
                 delay = backoff_sec(base_delay, attempt, 180)
                 write_log(f"verify 遇到限流，{delay:.0f}s 后重试 ({attempt}/{max_retries})")
-                sleep(delay)
+                if not pause(delay):
+                    return None
                 if not fresh_device():
                     return None
                 continue
@@ -237,7 +259,8 @@ def sso_to_token(
         except Exception as exc:
             delay = backoff_sec(base_delay, attempt, 120)
             write_log(f"verify 异常，{delay:.0f}s 后重试：{exc}")
-            sleep(delay)
+            if not pause(delay):
+                return None
             continue
 
         try:
@@ -258,7 +281,8 @@ def sso_to_token(
                 rate_hits += 1
                 delay = backoff_sec(base_delay, attempt, 180)
                 write_log(f"approve 遇到限流，{delay:.0f}s 后重试 ({attempt}/{max_retries})")
-                sleep(delay)
+                if not pause(delay):
+                    return None
                 if not fresh_device():
                     return None
                 verified = False
@@ -271,7 +295,8 @@ def sso_to_token(
         except Exception as exc:
             delay = backoff_sec(base_delay, attempt, 120)
             write_log(f"approve 异常，{delay:.0f}s 后重试：{exc}")
-            sleep(delay)
+            if not pause(delay):
+                return None
 
     if not verified or not approved:
         if rate_hits:
@@ -283,8 +308,12 @@ def sso_to_token(
         int(device.get("interval", 5)),
         int(device.get("expires_in", 1800)),
         timeout=int(device.get("expires_in", 1800)),
+        sleep=sleep,
+        should_cancel=should_cancel,
     )
-    return enrich_token_with_userinfo(result) if result else None
+    if not result or (should_cancel and should_cancel()):
+        return None
+    return enrich_token_with_userinfo(result)
 
 
 def token_identity(token: dict[str, Any]) -> tuple[str, str]:

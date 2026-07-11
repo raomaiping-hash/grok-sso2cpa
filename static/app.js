@@ -3,6 +3,7 @@ const state = {
   authFiles: [],
   jobId: null,
   timer: null,
+  canceling: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -111,10 +112,15 @@ async function startJob() {
 }
 
 function showMonitor() {
+  if (state.timer) window.clearTimeout(state.timer);
+  state.timer = null;
   $('#emptyMonitor').classList.add('hidden');
   $('#activeMonitor').classList.remove('hidden');
   $('#downloadArea').classList.add('hidden');
   $('#logLines').innerHTML = '';
+  $('#cancelButton').classList.add('hidden');
+  $('#cancelButton').disabled = false;
+  state.canceling = false;
   $('#jobStatus').textContent = '排队中';
   $('#jobStatus').className = 'status-badge running';
   window.location.hash = 'activity';
@@ -127,10 +133,10 @@ function updateMonitor(job) {
   $('#progressPercent').textContent = `${percent}%`;
   $('#progressCount').textContent = `${done} / ${total}`;
   $('#progressBar').style.width = `${percent}%`;
-  $('#progressTitle').textContent = job.status === 'running' ? '正在转换' : job.status === 'completed' ? '转换完成' : job.status === 'failed' ? '任务失败' : '正在准备';
-  $('#progressSubtitle').textContent = job.error || (job.status === 'running' ? 'Device Flow 与文件生成正在本地执行' : '');
+  $('#progressTitle').textContent = job.status === 'running' ? '正在转换' : job.status === 'cancelling' ? '正在停止' : job.status === 'completed' ? '转换完成' : job.status === 'cancelled' ? '任务已停止' : job.status === 'failed' ? '任务失败' : '正在准备';
+  $('#progressSubtitle').textContent = job.error || (job.status === 'running' ? 'Device Flow 与文件生成正在本地执行' : job.status === 'cancelling' ? '正在取消未开始的账号任务' : '');
   $('#currentLabel').textContent = job.current_label || '等待后台任务启动';
-  $('#currentState').textContent = job.status === 'running' ? '处理中' : job.status === 'completed' ? '已完成' : job.status === 'failed' ? '已停止' : '排队中';
+  $('#currentState').textContent = job.status === 'running' ? '处理中' : job.status === 'cancelling' ? '停止中' : job.status === 'completed' ? '已完成' : job.status === 'cancelled' ? '已停止' : job.status === 'failed' ? '失败' : '排队中';
   $('#successCount').textContent = job.success || 0;
   $('#failedCount').textContent = job.failed || 0;
   $('#fileCount').textContent = (job.files || []).length;
@@ -140,7 +146,13 @@ function updateMonitor(job) {
   if (job.status === 'completed') { status.textContent = job.failed ? '部分完成' : '已完成'; status.className = 'status-badge done'; }
   if (job.status === 'failed') { status.textContent = '失败'; status.className = 'status-badge failed'; }
   if (job.status === 'running') { status.textContent = '执行中'; status.className = 'status-badge running'; }
-  if (['completed', 'failed'].includes(job.status)) {
+  if (job.status === 'cancelling') { status.textContent = '停止中'; status.className = 'status-badge running'; }
+  if (job.status === 'cancelled') { status.textContent = '已停止'; status.className = 'status-badge cancelled'; }
+  const canCancel = ['queued', 'running', 'cancelling'].includes(job.status);
+  $('#cancelButton').classList.toggle('hidden', !canCancel);
+  $('#cancelButton').disabled = state.canceling || job.status === 'cancelling';
+  $('#cancelButton').textContent = job.status === 'cancelling' ? '停止中…' : '停止任务';
+  if (['completed', 'failed', 'cancelled'].includes(job.status)) {
     $('#logState').textContent = 'DONE';
     if (job.files?.length) {
       $('#downloadArea').classList.remove('hidden');
@@ -159,7 +171,7 @@ async function loadHistory() {
     const list = $('#historyList');
     if (!jobs.length) { list.innerHTML = '<div class="history-empty">还没有已完成的任务</div>'; return; }
     list.innerHTML = jobs.map((job) => {
-      const stateLabel = job.status === 'completed' ? '已完成' : job.status === 'failed' ? '失败' : '执行中';
+      const stateLabel = job.status === 'completed' ? '已完成' : job.status === 'failed' ? '失败' : job.status === 'cancelled' ? '已停止' : '执行中';
       const result = `${job.success || 0} 成功 · ${job.failed || 0} 失败`;
       return `<div class="history-row"><div><strong>${escapeHtml(job.current_label || `任务 ${job.id}`)}</strong><span>${escapeHtml(job.id)} · ${stateLabel}</span></div><div class="history-result">${result}</div><a class="history-link" href="#activity" data-history-id="${job.id}">查看</a></div>`;
     }).join('');
@@ -169,12 +181,14 @@ async function loadHistory() {
 
 async function pollJob() {
   if (!state.jobId) return;
+  const jobId = state.jobId;
   try {
-    const response = await fetch(`/api/jobs/${state.jobId}`);
+    const response = await fetch(`/api/jobs/${jobId}`);
     if (!response.ok) throw new Error('无法读取任务状态');
     const job = await response.json();
+    if (state.jobId !== jobId) return;
     updateMonitor(job);
-    if (['completed', 'failed'].includes(job.status)) { state.timer = null; return; }
+    if (['completed', 'failed', 'cancelled'].includes(job.status)) { state.timer = null; return; }
   } catch (error) {
     $('#logLines').innerHTML += `<div>轮询失败：${escapeHtml(error.message)}</div>`;
   }
@@ -185,6 +199,21 @@ $$('.source-tab').forEach((button) => button.addEventListener('click', () => set
 $('#ssoInput').addEventListener('input', updateLineCount);
 $('#startButton').addEventListener('click', startJob);
 $('#refreshHistory').addEventListener('click', loadHistory);
+$('#cancelButton').addEventListener('click', async () => {
+  if (!state.jobId || state.canceling) return;
+  const jobId = state.jobId;
+  state.canceling = true;
+  $('#cancelButton').disabled = true;
+  try {
+    const response = await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || '停止任务失败');
+    if (state.jobId === jobId) updateMonitor(data);
+  } catch (error) {
+    state.canceling = false;
+    $('#logLines').innerHTML += `<div>停止失败：${escapeHtml(error.message)}</div>`;
+  }
+});
 $('#authFiles').addEventListener('change', async (event) => {
   try { state.authFiles = await readFiles(event.target.files); renderFiles(); showMessage(''); }
   catch (error) { showMessage(error.message); }

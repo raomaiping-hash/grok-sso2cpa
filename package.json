@@ -1,0 +1,59 @@
+{
+  "name": "sso-bridge",
+  "productName": "SSO Bridge",
+  "version": "0.3.0",
+  "description": "Local desktop workbench for converting x.ai SSO credentials.",
+  "main": "electron/main.js",
+  "author": "SSO Bridge contributors",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "python -m unittest discover -s tests -v",
+    "build:backend": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "dist": "npm run build:backend && electron-builder --publish never",
+    "release": "node scripts/release.js"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.sso-bridge.desktop",
+    "productName": "SSO Bridge",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "extraResources": [
+      {
+        "from": "backend-dist/sso-bridge-backend",
+        "to": "backend/sso-bridge-backend"
+      },
+      {
+        "from": "static",
+        "to": "static"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "SSO-Bridge-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "YOUR_GITHUB_OWNER",
+        "repo": "YOUR_GITHUB_REPO"
+      }
+    ]
+  }
+}

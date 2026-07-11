@@ -179,6 +179,46 @@ async function loadHistory() {
   } catch (_) { /* Monitor remains usable if history is unavailable. */ }
 }
 
+async function setupElectronUpdates() {
+  const button = $('#updateButton');
+  const api = window.electronAPI;
+  if (!button || !api) return;
+
+  let action = 'check';
+  const setButton = (label, nextAction = 'check', disabled = false) => {
+    button.textContent = label;
+    button.disabled = disabled;
+    action = nextAction;
+  };
+
+  const version = await api.getVersion();
+  $('#appVersion').textContent = `v${version}`;
+  setButton(`v${version} · 检查更新`);
+  button.addEventListener('click', async () => {
+    if (action === 'download') {
+      setButton('正在下载…', 'check', true);
+      await api.downloadUpdate();
+      return;
+    }
+    if (action === 'install') {
+      setButton('正在重启…', 'check', true);
+      await api.installUpdate();
+      return;
+    }
+    setButton('检查中…', 'check', true);
+    await api.checkForUpdates();
+  });
+
+  api.onUpdateStatus((payload) => {
+    if (payload.status === 'checking') setButton('检查中…', 'check', true);
+    if (payload.status === 'available') setButton(`下载更新 v${payload.version}`, 'download');
+    if (payload.status === 'downloading') setButton(`下载中 ${Math.round(payload.percent || 0)}%`, 'check', true);
+    if (payload.status === 'downloaded') setButton(`重启安装 v${payload.version}`, 'install');
+    if (payload.status === 'not-available') setButton(`v${version} · 已是最新`);
+    if (payload.status === 'error') setButton('更新失败 · 重试');
+  });
+}
+
 async function pollJob() {
   if (!state.jobId) return;
   const jobId = state.jobId;
@@ -221,3 +261,4 @@ $('#authFiles').addEventListener('change', async (event) => {
 $$('.output-option input').forEach((input) => input.addEventListener('change', () => setOptionState(input)));
 updateLineCount();
 loadHistory();
+setupElectronUpdates();

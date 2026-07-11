@@ -24,6 +24,9 @@ body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); f
 button, input, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 .ambient { position: fixed; z-index: -1; width: 520px; height: 520px; border-radius: 50%; filter: blur(100px); opacity: .12; pointer-events: none; }
+.update-button { margin-left: 5px; border: 1px solid rgba(141,225,177,.2); border-radius: 5px; padding: 4px 6px; color: var(--green); background: transparent; font: 500 8px "DM Mono", monospace; cursor: pointer; }
+.update-button:hover { background: rgba(141,225,177,.08); }
+.update-button:disabled { cursor: wait; opacity: .65; }
 .ambient-one { top: -250px; right: 4%; background: var(--orange-strong); }
 .ambient-two { bottom: -300px; left: 30%; background: #475cbb; }
 .app-shell { display: flex; min-height: 100vh; }

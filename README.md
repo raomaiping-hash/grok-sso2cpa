@@ -25,6 +25,27 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 python -m unittest discover -s tests -v
 ```
 
+## Electron 桌面版
+
+开发运行需要 Node.js、Python 以及依赖：
+
+```powershell
+npm install
+python -m pip install -r requirements.txt
+npm start
+```
+
+打包 Windows 安装程序：
+
+```powershell
+python -m pip install -r requirements-build.txt
+npm run dist
+```
+
+安装包输出在 `release/`。应用会把 Python 后端作为本地子进程启动，任务输出写入 Electron 的用户数据目录（Windows 默认位于 `%APPDATA%/sso-bridge/jobs`；开发版也可能使用 `data/jobs`）。应用内的“检查版本”使用 `electron-updater` 检查 GitHub Releases。
+
+发布到 GitHub 前设置 `GH_TOKEN`、`GH_OWNER`、`GH_REPO`，然后运行 `npm run release`。发布脚本会拒绝缺少这些配置的发布操作，不会把占位仓库名上传出去。
+
 ## 使用方式
 
 1. 在“SSO Cookie”页签粘贴 Cookie，每行一个；也支持 `email----cookie` 与 `email----password----cookie`（密码只用于兼容输入格式，不会被使用）。

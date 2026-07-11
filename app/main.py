@@ -6,6 +6,7 @@ import asyncio
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import ipaddress
 import json
+import os
 import secrets
 import shutil
 import threading
@@ -31,8 +32,9 @@ from .converter import (
 from .oauth import MissingOAuthDependencyError, RateLimitedError, backoff_sec, sso_to_token
 
 ROOT = Path(__file__).resolve().parent.parent
-STATIC_DIR = ROOT / "static"
-JOB_ROOT = ROOT / "data" / "jobs"
+STATIC_DIR = Path(os.environ.get("SSO_BRIDGE_STATIC_DIR", ROOT / "static"))
+DATA_DIR = Path(os.environ.get("SSO_BRIDGE_DATA_DIR", ROOT / "data"))
+JOB_ROOT = DATA_DIR / "jobs"
 JOB_RETENTION_SECONDS = 24 * 60 * 60
 MAX_AUTH_BYTES = 50_000_000
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
@@ -214,6 +216,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.middleware("http")
 async def local_only(request: Request, call_next):
+    expected_token = os.environ.get("SSO_BRIDGE_LOCAL_TOKEN")
+    if expected_token and request.headers.get("x-sso-bridge-token") != expected_token:
+        return JSONResponse(status_code=401, content={"detail": "本地引擎令牌无效"})
     host = request.client.host if request.client else ""
     try:
         is_loopback = ipaddress.ip_address(host).is_loopback

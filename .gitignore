@@ -5,3 +5,10 @@ __pycache__/
 venv/
 data/jobs/
 *.log
+node_modules/
+release/
+backend-dist/
+build/
+dist/
+*.spec
+.release-builder-*.json

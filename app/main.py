@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import ipaddress
 import json
 import secrets
@@ -27,15 +28,13 @@ from .converter import (
     token_to_auth_entry,
     token_to_cliproxy_entry,
 )
-from .oauth import MissingOAuthDependencyError, Pacer, RateLimitedError, backoff_sec, sso_to_token
+from .oauth import MissingOAuthDependencyError, RateLimitedError, backoff_sec, sso_to_token
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT / "static"
 JOB_ROOT = ROOT / "data" / "jobs"
 JOB_RETENTION_SECONDS = 24 * 60 * 60
-MAX_BATCH_ACCOUNTS = 100
 MAX_AUTH_BYTES = 50_000_000
-MAX_ACTIVE_JOBS = 3
 JOB_ROOT.mkdir(parents=True, exist_ok=True)
 
 
@@ -60,8 +59,8 @@ class AuthInput(BaseModel):
 
 class JobRequest(BaseModel):
     mode: Literal["sso", "from_auth"] = "sso"
-    sso_text: str = Field(default="", max_length=10_000_000)
-    auth_files: list[AuthInput] = Field(default_factory=list, max_length=MAX_BATCH_ACCOUNTS)
+    sso_text: str = ""
+    auth_files: list[AuthInput] = Field(default_factory=list)
     email_override: str = Field(default="", max_length=320)
     target_cliproxy: bool = True
     target_grok: bool = True
@@ -69,6 +68,7 @@ class JobRequest(BaseModel):
     max_delay: float = Field(default=180, ge=30, le=1800)
     retries: int = Field(default=8, ge=1, le=20)
     account_retries: int = Field(default=3, ge=1, le=10)
+    concurrency: int = Field(default=4, ge=1, le=64)
 
 
 @dataclass
@@ -176,10 +176,6 @@ class JobStore:
         with self._lock:
             return sorted(self._jobs.values(), key=lambda job: job.created_at, reverse=True)[:20]
 
-    def active_count(self) -> int:
-        with self._lock:
-            return sum(job.status in {"queued", "running"} for job in self._jobs.values())
-
     def purge_expired(self) -> None:
         cutoff = time.time() - JOB_RETENTION_SECONDS
         with self._lock:
@@ -232,12 +228,8 @@ async def create_job(request: JobRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="请上传至少一个 auth JSON 文件")
     if request.mode == "from_auth" and not request.target_cliproxy:
         raise HTTPException(status_code=422, detail="已有 auth 文件转换只支持 cliproxyapi 输出")
-    if len(load_sso_list(request.sso_text)) > MAX_BATCH_ACCOUNTS:
-        raise HTTPException(status_code=422, detail=f"单批最多支持 {MAX_BATCH_ACCOUNTS} 个账号")
     if sum(len(item.content.encode("utf-8")) for item in request.auth_files) > MAX_AUTH_BYTES:
         raise HTTPException(status_code=413, detail="上传文件总大小不能超过 50 MB")
-    if store.active_count() >= MAX_ACTIVE_JOBS:
-        raise HTTPException(status_code=429, detail="当前已有 3 个任务在执行，请稍后再试")
     job = store.create(request)
     asyncio.create_task(asyncio.to_thread(run_job, job))
     return job.snapshot()
@@ -310,53 +302,60 @@ def run_sso_job(job: Job) -> None:
     accounts = load_sso_list(request.sso_text)
     request.sso_text = ""
     job.total = len(accounts)
-    job.log(f"已读取 {len(accounts)} 个 SSO 输入")
-    pace = Pacer(request.delay, request.max_delay)
+    job.log(f"已读取 {len(accounts)} 个 SSO 输入，并发数 {request.concurrency}")
     grok_payload: dict[str, Any] = {}
 
-    for index, (cookie, line_email) in enumerate(accounts, start=1):
-        job.current = index
-        job.current_label = line_email or f"账号 {index}"
-        job.log(f"[{index}/{len(accounts)}] 开始处理 {job.current_label}")
+    def process_account(index: int, cookie: str, line_email: str) -> tuple[int, str, dict[str, Any] | None, Exception | None]:
+        label = line_email or f"账号 {index}"
+        job.log(f"[{index}/{len(accounts)}] 开始处理 {label}")
         token: dict[str, Any] | None = None
         last_error: Exception | None = None
         for attempt in range(1, request.account_retries + 1):
             try:
-                token = sso_to_token(cookie, max_retries=request.retries, base_delay=15, log=job.log)
+                token = sso_to_token(
+                    cookie,
+                    max_retries=request.retries,
+                    base_delay=request.delay or 15,
+                    log=job.log,
+                )
                 if token:
                     break
                 break
             except RateLimitedError as exc:
                 last_error = exc
-                pace.on_rate_limit()
                 if attempt < request.account_retries:
-                    cool = backoff_sec(pace.current, attempt, request.max_delay)
+                    cool = backoff_sec(request.delay or 15, attempt, request.max_delay)
                     job.log(f"账号触发限流，冷却 {cool:.0f}s 后重试 ({attempt}/{request.account_retries})")
                     time.sleep(cool)
+        return index, line_email, token, last_error
 
-        if not token:
-            job.failed += 1
-            detail = f"：{last_error}" if last_error else ""
-            job.accounts.append({"label": job.current_label, "status": "failed", "error": str(detail).lstrip("：")})
-            job.log(f"[{index}/{len(accounts)}] 失败{detail}")
-            pace.wait_between(index < len(accounts))
-            continue
+    with ThreadPoolExecutor(max_workers=request.concurrency, thread_name_prefix="sso-account") as executor:
+        futures = [executor.submit(process_account, index, cookie, email) for index, (cookie, email) in enumerate(accounts, start=1)]
+        for future in as_completed(futures):
+            index, line_email, token, last_error = future.result()
+            completed = job.success + job.failed + 1
+            job.current = completed
+            job.current_label = f"并发处理中 · {completed}/{len(accounts)}"
+            if not token:
+                job.failed += 1
+                detail = str(last_error) if last_error else "SSO 转换失败"
+                job.accounts.append({"label": line_email or f"账号 {index}", "status": "failed", "error": detail})
+                job.log(f"[{index}/{len(accounts)}] 失败：{detail}")
+                continue
 
-        email = request.email_override or line_email
-        output_names: list[str] = []
-        if request.target_cliproxy:
-            filename, entry = token_to_cliproxy_entry(token, email=email)
-            output_names.append(job.write_file(filename, serialize_json(entry, compact=True)))
-        if request.target_grok:
-            key, entry = token_to_auth_entry(token, email=email)
-            grok_payload = merge_auth_payload(grok_payload, entry, unique=True)
-            output_names.append(f"auth.json ({key})")
+            email = request.email_override or line_email
+            output_names: list[str] = []
+            if request.target_cliproxy:
+                filename, entry = token_to_cliproxy_entry(token, email=email)
+                output_names.append(job.write_file(filename, serialize_json(entry, compact=True)))
+            if request.target_grok:
+                key, entry = token_to_auth_entry(token, email=email)
+                grok_payload = merge_auth_payload(grok_payload, entry, unique=True)
+                output_names.append(f"auth.json ({key})")
 
-        job.success += 1
-        job.accounts.append({"label": email or f"账号 {index}", "status": "success", "files": output_names})
-        job.log(f"[{index}/{len(accounts)}] 完成：{', '.join(output_names)}")
-        pace.on_success()
-        pace.wait_between(index < len(accounts))
+            job.success += 1
+            job.accounts.append({"label": email or f"账号 {index}", "status": "success", "files": output_names})
+            job.log(f"[{index}/{len(accounts)}] 完成：{', '.join(output_names)}")
 
     if request.target_grok and grok_payload:
         job.write_file("auth.json", serialize_json(grok_payload))

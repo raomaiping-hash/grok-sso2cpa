@@ -45,7 +45,7 @@
 
         <section class="metric-row" aria-label="产品能力">
           <div class="metric-card"><div class="metric-icon orange">↔</div><div><strong>2</strong><span>输出格式</span></div><small>Grok · cliproxy</small></div>
-          <div class="metric-card"><div class="metric-icon blue">◎</div><div><strong>100</strong><span>单批上限</span></div><small>支持批量队列</small></div>
+          <div class="metric-card"><div class="metric-icon blue">◎</div><div><strong>∞</strong><span>批量账号</span></div><small>不设数量上限</small></div>
           <div class="metric-card"><div class="metric-icon green">⌁</div><div><strong>0</strong><span>当前任务</span></div><small>等待你的第一个转换</small></div>
           <div class="metric-card process-card"><div class="process-visual"><span></span><span></span><span></span></div><div><strong>Local</strong><span>处理位置</span></div><small>凭据留在本机</small></div>
         </section>
@@ -89,10 +89,11 @@
             <details class="advanced-settings">
               <summary><span>⚙</span>高级策略 <small>限流退避、重试与账号标记</small><b>⌄</b></summary>
               <div class="settings-grid">
-                <label><span>账号间隔（秒）</span><input id="delay" type="number" min="0" max="900" value="20" /><small>0 会使用温和默认值</small></label>
+                <label><span>限流基础等待（秒）</span><input id="delay" type="number" min="0" max="900" value="15" /><small>仅在限流重试时使用</small></label>
                 <label><span>最大退避（秒）</span><input id="maxDelay" type="number" min="30" max="1800" value="180" /><small>限流时的等待上限</small></label>
                 <label><span>单账号重试</span><input id="retries" type="number" min="1" max="20" value="8" /><small>verify / approve</small></label>
                 <label><span>账号级重试</span><input id="accountRetries" type="number" min="1" max="10" value="3" /><small>限流后重新跑账号</small></label>
+                <label><span>并发账号数</span><input id="concurrency" type="number" min="1" max="64" value="4" /><small>同时执行的 Device Flow</small></label>
                 <label class="wide"><span>统一邮箱标签（可选）</span><input id="emailOverride" type="email" placeholder="留空则从输入或 userinfo 获取" /><small>用于生成稳定的 xai-{email}.json 文件名</small></label>
               </div>
             </details>

@@ -75,6 +75,7 @@ function buildPayload() {
     max_delay: Number($('#maxDelay').value),
     retries: Number($('#retries').value),
     account_retries: Number($('#accountRetries').value),
+    concurrency: Number($('#concurrency').value),
   };
 }
 
